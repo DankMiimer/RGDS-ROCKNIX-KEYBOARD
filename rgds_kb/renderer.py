@@ -1,18 +1,21 @@
 """
-renderer.py — Keyboard rendering: key drawing, text layout, and screen painting.
+renderer.py — Pixel-art keyboard rendering.
 
-Handles computing pixel rectangles for keys (proportional sizing), drawing
-individual keys with labels, and painting the full keyboard to the SDL renderer.
+Draws chunky beveled keys with corner notches for a retro pixel-art feel.
+Supports accent-color-aware rendering and special options menu drawing.
 """
 
 from .constants import (
-    SCREEN_WIDTH, GAP,
-    COLOR_BACKGROUND, COLOR_KEY_LETTER, COLOR_KEY_LETTER_HL,
-    COLOR_KEY_DEFAULT, COLOR_KEY_SPECIAL, COLOR_KEY_ACTIVE,
-    COLOR_KEY_PRESSED, COLOR_TEXT_DEFAULT, COLOR_TEXT_SPECIAL,
-    COLOR_TEXT_NUMBER, COLOR_BORDER, COLOR_BLACK, COLOR_DIVIDER,
+    SCREEN_WIDTH, GAP, BEVEL, NOTCH,
+    COLOR_BACKGROUND, COLOR_KEY_LETTER, COLOR_KEY_DEFAULT,
+    COLOR_KEY_SPECIAL, COLOR_KEY_NUMBER,
+    COLOR_BEVEL_LIGHT, COLOR_BEVEL_DARK,
+    COLOR_PRESS_FACE, COLOR_PRESS_LIGHT, COLOR_PRESS_DARK,
+    COLOR_TEXT_DEFAULT, COLOR_TEXT_SPECIAL, COLOR_TEXT_NUMBER, COLOR_TEXT_DIM,
+    COLOR_BLACK, COLOR_DIVIDER,
+    ACCENT_PRESETS,
 )
-from .font import FONT, measure_text, get_glyph
+from .font import measure_text, get_glyph
 
 
 # =============================================================================
@@ -20,17 +23,7 @@ from .font import FONT, measure_text, get_glyph
 # =============================================================================
 
 def compute_key_rects(layout):
-    """Compute pixel rectangles for every key in a layout.
-
-    Keys within a row are sized proportionally based on their 'w' weight.
-    Each key gets an added 'rect' field: (x, y, width, height).
-
-    Args:
-        layout: A layout dict with 'rows' containing key dicts with 'w' weights.
-
-    Returns:
-        List of rows, where each row is a list of key dicts with 'rect' added.
-    """
+    """Compute pixel rectangles for every key in a layout."""
     rows = []
     for row in layout['rows']:
         y = row['y']
@@ -52,7 +45,6 @@ def compute_key_rects(layout):
             })
             cursor_x += key_width + GAP
 
-        # Stretch last key to fill remaining space (avoids rounding gaps)
         if computed:
             last = computed[-1]
             rx, ry, rw, rh = last['rect']
@@ -67,187 +59,319 @@ def compute_key_rects(layout):
 # =============================================================================
 
 def draw_char(sdl, renderer, char, x, y, scale, color):
-    """Draw a single character glyph at (x, y) with the given scale and color.
-
-    Args:
-        sdl: SDL wrapper instance
-        renderer: SDL renderer pointer
-        char: Single character string
-        x, y: Top-left pixel position
-        scale: Pixel size of each glyph "dot" (e.g. 3 = 3×3 pixels per dot)
-        color: (R, G, B, A) tuple
-    """
+    """Draw a single character glyph at (x, y) with the given scale and color."""
     glyph = get_glyph(char)
     if not glyph:
         return
-
     sdl.set_draw_color(renderer, *color)
     for row_idx, bits in enumerate(glyph):
         for col_idx in range(5):
             if bits & (1 << (4 - col_idx)):
-                sdl.fill_rect(
-                    renderer,
-                    x + col_idx * scale,
-                    y + row_idx * scale,
-                    scale, scale,
-                )
+                sdl.fill_rect(renderer, x + col_idx * scale, y + row_idx * scale, scale, scale)
 
 
 def draw_text(sdl, renderer, text, x, y, scale, color):
-    """Draw a string of text, character by character.
-
-    Args:
-        sdl: SDL wrapper instance
-        renderer: SDL renderer pointer
-        text: String to draw
-        x, y: Top-left pixel position of the first character
-        scale: Glyph dot size in pixels
-        color: (R, G, B, A) tuple
-    """
-    char_advance = 5 * scale + scale  # 5 columns + 1 column spacing
+    """Draw a string of text, character by character."""
+    char_advance = 5 * scale + scale
     for i, char in enumerate(text):
         draw_char(sdl, renderer, char, x + i * char_advance, y, scale, color)
 
 
 # =============================================================================
-# Key classification helpers
+# Key classification
 # =============================================================================
 
 def _is_letter_key(key):
-    """True if this is a single-letter alphabetic key (not an action key)."""
-    return (
-        key['c'] is not None
-        and not key.get('a')
-        and len(key['d']) == 1
-        and key['d'].isalpha()
-    )
-
+    return (key['c'] is not None and not key.get('a')
+            and len(key['d']) == 1 and key['d'].isalpha())
 
 def _is_number_key(key):
-    """True if this is a single-digit number key."""
-    return (
-        key['c'] is not None
-        and not key.get('a')
-        and len(key['d']) == 1
-        and key['d'].isdigit()
-    )
-
+    return (key['c'] is not None and not key.get('a')
+            and len(key['d']) == 1 and key['d'].isdigit())
 
 def _is_special_key(key):
-    """True if this is a special/action key (shift, symbols, nav, etc.)."""
     return bool(key.get('a'))
 
-
 def _is_shift_key(key):
-    """True if this is a shift or unshift action key."""
     return key.get('a') in ('shift', 'unshift')
 
+def _is_accent_swatch(key):
+    return 'accent_idx' in key
+
+def _is_options_label(key):
+    """Non-interactive labels in options (title, brightness label, bar)."""
+    return key['l'] in ('opt_title', 'br_label', 'br_bar')
+
 
 # =============================================================================
-# Individual key rendering
+# Pixel-art beveled key drawing
 # =============================================================================
 
-def draw_key(sdl, renderer, key, pressed=False, shift_active=False):
-    """Draw a single key with background, highlight, border, and label.
+def _draw_bevel_box(sdl, ren, x, y, w, h, face, light, dark):
+    """Draw a pixel-art beveled rectangle with corner notches.
+
+    Creates a chunky 3D raised button effect:
+    - Light color on top and left edges (BEVEL px thick)
+    - Dark color on bottom and right edges
+    - Corner notches cut for pixel-rounded look
+    - Face color fills the center
+    """
+    b = BEVEL
+    n = NOTCH
+
+    # Face (full rect, then bevel paints over edges)
+    sdl.set_draw_color(ren, *face)
+    sdl.fill_rect(ren, x, y, w, h)
+
+    # Top bevel (light) — with corner notch insets
+    sdl.set_draw_color(ren, *light)
+    sdl.fill_rect(ren, x + n, y, w - 2 * n, b)           # Top edge
+    sdl.fill_rect(ren, x, y + n, b, h - 2 * n)           # Left edge
+    # Top-left corner fill (diagonal pixel notch)
+    sdl.fill_rect(ren, x + n, y, b, n)
+    sdl.fill_rect(ren, x, y + n, n, b)
+
+    # Bottom bevel (dark) — with corner notch insets
+    sdl.set_draw_color(ren, *dark)
+    sdl.fill_rect(ren, x + n, y + h - b, w - 2 * n, b)   # Bottom edge
+    sdl.fill_rect(ren, x + w - b, y + n, b, h - 2 * n)   # Right edge
+    # Bottom-right corner fill
+    sdl.fill_rect(ren, x + w - b - n, y + h - b, b + n, b)
+    sdl.fill_rect(ren, x + w - b, y + h - b - n, b, b + n)
+
+    # Cut corner notches (background color peeks through)
+    sdl.set_draw_color(ren, *COLOR_BACKGROUND)
+    # Top-left notch
+    sdl.fill_rect(ren, x, y, n, n)
+    # Top-right notch
+    sdl.fill_rect(ren, x + w - n, y, n, n)
+    # Bottom-left notch
+    sdl.fill_rect(ren, x, y + h - n, n, n)
+    # Bottom-right notch
+    sdl.fill_rect(ren, x + w - n, y + h - n, n, n)
+
+
+def draw_key(sdl, ren, key, pressed=False, shift_active=False, accent=None):
+    """Draw a single pixel-art key.
 
     Args:
-        sdl: SDL wrapper instance
-        renderer: SDL renderer pointer
-        key: Key dict with 'rect', 'd', etc.
-        pressed: Whether the key is currently pressed (finger down)
-        shift_active: Whether shift mode is visually active (highlights shift keys)
+        accent: Current accent preset dict with 'color' and 'hl' keys, or None.
     """
     x, y, w, h = key['rect']
     is_letter = _is_letter_key(key)
     is_number = _is_number_key(key)
     is_special = _is_special_key(key)
     is_shift = _is_shift_key(key)
+    is_swatch = _is_accent_swatch(key)
+    is_label = _is_options_label(key)
 
-    # Background color
-    if pressed:
-        bg = COLOR_KEY_PRESSED
-    elif is_shift and shift_active:
-        bg = COLOR_KEY_ACTIVE
+    # ── Determine colors ──────────────────────────────────────────────────
+
+    if is_swatch:
+        # Color swatch: fill with the accent color
+        idx = key['accent_idx']
+        preset = ACCENT_PRESETS[idx]
+        face = preset['color']
+        light = preset['hl']
+        # Darken for shadow edge
+        dark = tuple(max(0, c - 60) for c in preset['color'][:3]) + (255,)
+    elif is_label:
+        # Non-interactive label: flat dark
+        face = COLOR_BACKGROUND
+        light = COLOR_DIVIDER
+        dark = COLOR_BACKGROUND
+    elif pressed:
+        # Sunken pressed state — use accent color for face glow
+        if accent:
+            ac = accent['color']
+            face = (ac[0] // 3, ac[1] // 3, ac[2] // 3, 255)
+        else:
+            face = COLOR_PRESS_FACE
+        light = COLOR_PRESS_LIGHT
+        dark = COLOR_PRESS_DARK
+    elif is_shift and shift_active and accent:
+        # Active shift: accent-colored
+        face = accent['color']
+        light = accent['hl']
+        dark = tuple(max(0, c - 60) for c in accent['color'][:3]) + (255,)
     elif is_letter:
-        bg = COLOR_KEY_LETTER
+        face = COLOR_KEY_LETTER
+        light = COLOR_BEVEL_LIGHT
+        dark = COLOR_BEVEL_DARK
+    elif is_number:
+        face = COLOR_KEY_NUMBER
+        light = COLOR_BEVEL_LIGHT
+        dark = COLOR_BEVEL_DARK
     elif is_special:
-        bg = COLOR_KEY_SPECIAL
+        face = COLOR_KEY_SPECIAL
+        light = (55, 58, 82, 255)
+        dark = (18, 20, 35, 255)
     else:
-        bg = COLOR_KEY_DEFAULT
+        face = COLOR_KEY_DEFAULT
+        light = COLOR_BEVEL_LIGHT
+        dark = COLOR_BEVEL_DARK
 
-    sdl.set_draw_color(renderer, *bg)
-    sdl.fill_rect(renderer, x, y, w, h)
+    # ── Draw the beveled box ──────────────────────────────────────────────
 
-    # Top highlight strip for letter keys (subtle 3D effect)
-    if is_letter and not pressed:
-        sdl.set_draw_color(renderer, *COLOR_KEY_LETTER_HL)
-        sdl.fill_rect(renderer, x + 1, y + 1, w - 2, 2)
+    if is_label:
+        # Flat label, no bevel
+        sdl.set_draw_color(ren, *face)
+        sdl.fill_rect(ren, x, y, w, h)
+    else:
+        _draw_bevel_box(sdl, ren, x, y, w, h, face, light, dark)
 
-    # Border
-    sdl.set_draw_color(renderer, *COLOR_BORDER)
-    sdl.draw_rect(renderer, x, y, w, h)
+    # ── Inner shadow line on letter keys (extra depth) ────────────────────
 
-    # Label text
+    if is_letter and not pressed and not is_swatch:
+        sdl.set_draw_color(ren, *COLOR_BEVEL_DARK)
+        sdl.fill_rect(ren, x + BEVEL + 1, y + h - BEVEL - 1, w - 2 * BEVEL - 2, 1)
+
+    # ── Draw text label ───────────────────────────────────────────────────
+
     display = key['d']
-    if is_special or is_shift:
-        text_color = COLOR_TEXT_SPECIAL
+
+    if is_swatch:
+        # Swatch: white text, small
+        text_color = COLOR_TEXT_DEFAULT
+        scale = 2
+    elif is_label:
+        text_color = COLOR_TEXT_DIM
+        scale = 3
+    elif pressed and accent:
+        text_color = accent['hl']
+    elif is_special or is_shift:
+        if is_shift and shift_active and accent:
+            text_color = COLOR_TEXT_DEFAULT
+        else:
+            text_color = COLOR_TEXT_SPECIAL
     elif is_number:
         text_color = COLOR_TEXT_NUMBER
     else:
         text_color = COLOR_TEXT_DEFAULT
 
-    # Scale: larger for single letters, smaller for longer labels
-    if is_letter and len(display) == 1:
-        scale = 5
-    elif len(display) == 1:
-        scale = 4
-    elif len(display) <= 3:
-        scale = 3
-    else:
-        scale = 2
+    # Auto-scale based on content
+    if not is_swatch and not is_label:
+        if is_letter and len(display) == 1:
+            scale = 5
+        elif len(display) == 1:
+            scale = 4
+        elif len(display) <= 3:
+            scale = 3
+        else:
+            scale = 2
 
     text_w = measure_text(display, scale)
     text_h = 7 * scale
     text_x = x + (w - text_w) // 2
     text_y = y + (h - text_h) // 2
-    draw_text(sdl, renderer, display, text_x, text_y, scale, text_color)
+
+    # Pressed keys: shift text down+right 1px for depth effect
+    if pressed:
+        text_x += 1
+        text_y += 1
+
+    draw_text(sdl, ren, display, text_x, text_y, scale, text_color)
+
+    # ── Selection indicator for accent swatches ───────────────────────────
+
+    if is_swatch and accent and key['accent_idx'] == _find_accent_index(accent):
+        # Draw a small check/dot indicator
+        ic = COLOR_TEXT_DEFAULT
+        sdl.set_draw_color(ren, *ic)
+        # Bottom-center dot cluster (3x3)
+        cx = x + w // 2 - 2
+        cy = y + h - BEVEL - 8
+        sdl.fill_rect(ren, cx, cy, 5, 5)
+        # Inner dot darker
+        sdl.set_draw_color(ren, *face)
+        sdl.fill_rect(ren, cx + 1, cy + 1, 3, 3)
+        sdl.set_draw_color(ren, *ic)
+        sdl.fill_rect(ren, cx + 2, cy + 2, 1, 1)
+
+
+def _find_accent_index(accent):
+    """Find the index of the current accent in ACCENT_PRESETS."""
+    for i, p in enumerate(ACCENT_PRESETS):
+        if p['color'] == accent['color']:
+            return i
+    return -1
+
+
+# =============================================================================
+# Brightness bar (special rendering for the options brightness indicator)
+# =============================================================================
+
+def _draw_brightness_bar(sdl, ren, key, brightness_pct, accent):
+    """Draw a brightness progress bar inside the br_bar key rect."""
+    x, y, w, h = key['rect']
+
+    # Background
+    sdl.set_draw_color(ren, *COLOR_BACKGROUND)
+    sdl.fill_rect(ren, x, y, w, h)
+
+    # Track
+    track_x = x + 12
+    track_y = y + h // 2 - 8
+    track_w = w - 24
+    track_h = 16
+    sdl.set_draw_color(ren, *COLOR_BEVEL_DARK)
+    sdl.fill_rect(ren, track_x, track_y, track_w, track_h)
+
+    # Filled portion
+    fill_w = int(track_w * brightness_pct)
+    if accent:
+        sdl.set_draw_color(ren, *accent['color'])
+    else:
+        sdl.set_draw_color(ren, 130, 170, 245, 255)
+    if fill_w > 0:
+        sdl.fill_rect(ren, track_x, track_y, fill_w, track_h)
+
+    # Border around track
+    sdl.set_draw_color(ren, *COLOR_TEXT_DIM)
+    sdl.fill_rect(ren, track_x, track_y, track_w, 2)
+    sdl.fill_rect(ren, track_x, track_y + track_h - 2, track_w, 2)
+    sdl.fill_rect(ren, track_x, track_y, 2, track_h)
+    sdl.fill_rect(ren, track_x + track_w - 2, track_y, 2, track_h)
+
+    # Percentage text
+    pct_text = str(int(brightness_pct * 100))
+    scale = 2
+    tw = measure_text(pct_text, scale)
+    draw_text(sdl, ren, pct_text, x + (w - tw) // 2, y + 4, scale, COLOR_TEXT_DIM)
 
 
 # =============================================================================
 # Full keyboard rendering
 # =============================================================================
 
-def draw_keyboard(sdl, renderer, rows, pressed_label=None, shift_active=False):
-    """Draw the entire keyboard (background + all keys).
+def draw_keyboard(sdl, ren, rows, pressed_label=None, shift_active=False,
+                  accent=None, brightness_pct=0.5):
+    """Draw the entire keyboard with pixel-art styling.
 
     Args:
-        sdl: SDL wrapper instance
-        renderer: SDL renderer pointer
-        rows: List of rows from compute_key_rects()
-        pressed_label: Label string of the currently pressed key, or None
-        shift_active: Whether shift is visually active
+        accent: Current accent preset dict, or None for default.
+        brightness_pct: 0.0–1.0 for brightness bar in options view.
     """
-    # Background
-    sdl.set_draw_color(renderer, *COLOR_BACKGROUND)
-    sdl.clear(renderer)
+    sdl.set_draw_color(ren, *COLOR_BACKGROUND)
+    sdl.clear(ren)
 
-    # Row divider lines
-    for row in rows:
-        if row:
-            sdl.set_draw_color(renderer, *COLOR_DIVIDER)
-            sdl.fill_rect(renderer, 0, row[0]['rect'][1] - 1, SCREEN_WIDTH, 1)
-
-    # Keys
     for row in rows:
         for key in row:
             is_pressed = (pressed_label is not None and key['l'] == pressed_label)
-            draw_key(sdl, renderer, key, pressed=is_pressed, shift_active=shift_active)
 
-    sdl.present(renderer)
+            # Special: brightness bar
+            if key['l'] == 'br_bar':
+                _draw_brightness_bar(sdl, ren, key, brightness_pct, accent)
+                continue
+
+            draw_key(sdl, ren, key, pressed=is_pressed,
+                     shift_active=shift_active, accent=accent)
+
+    sdl.present(ren)
 
 
-def draw_blank(sdl, renderer):
-    """Fill the screen with black (used when keyboard is hidden)."""
-    sdl.set_draw_color(renderer, *COLOR_BLACK)
-    sdl.clear(renderer)
-    sdl.present(renderer)
+def draw_blank(sdl, ren):
+    """Fill the screen with black."""
+    sdl.set_draw_color(ren, *COLOR_BLACK)
+    sdl.clear(ren)
+    sdl.present(ren)

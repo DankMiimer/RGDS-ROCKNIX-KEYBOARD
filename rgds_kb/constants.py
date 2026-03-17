@@ -24,11 +24,7 @@ SCREEN_HEIGHT = 480
 # Window / Sway integration
 # =============================================================================
 
-# Title must contain "[Bottom]" for ROCKNIX sway rule to route to DSI-1
 WINDOW_TITLE = "RGDS Keyboard [Bottom]"
-
-# How often (seconds) to re-assert DSI-1 power and fullscreen placement.
-# EmulationStation turns off DSI-1 when launching apps; this counters that.
 REASSERT_INTERVAL = 1.5
 
 # =============================================================================
@@ -41,10 +37,9 @@ BTN_THUMBR = 318  # R3 (right stick click) button code
 # Key repeat timing
 # =============================================================================
 
-REPEAT_DELAY = 0.4   # Seconds before repeat starts
-REPEAT_RATE = 0.05    # Seconds between repeated keystrokes
+REPEAT_DELAY = 0.4
+REPEAT_RATE = 0.05
 
-# Keys that support held-key repeat (identified by their label/ID)
 REPEATABLE_KEYS = frozenset({
     'bksp', 'bksp2', 'bksp3',
     'space',
@@ -56,25 +51,70 @@ REPEATABLE_KEYS = frozenset({
 # Layout geometry
 # =============================================================================
 
-GAP = 3  # Pixel gap between keys and screen edge
+GAP = 3
+BEVEL = 3   # Pixel-art bevel thickness (chunky 3D edges)
+NOTCH = 2   # Corner notch size for pixel-rounded look
 
 # =============================================================================
-# Colors — all (R, G, B, A) tuples
+# Base colors — all (R, G, B, A) tuples
 # =============================================================================
 
-COLOR_BACKGROUND    = (15, 15, 25, 255)      # Dark blue-black canvas
-COLOR_KEY_LETTER    = (48, 52, 82, 255)       # Letter key background
-COLOR_KEY_LETTER_HL = (58, 63, 98, 255)       # Letter key top highlight strip
-COLOR_KEY_DEFAULT   = (38, 40, 62, 255)       # Non-letter key background
-COLOR_KEY_SPECIAL   = (30, 32, 50, 255)       # Special/action key background
-COLOR_KEY_ACTIVE    = (65, 50, 90, 255)       # Shift key when active
-COLOR_KEY_PRESSED   = (220, 65, 85, 255)      # Any key while finger is down
-COLOR_TEXT_DEFAULT  = (215, 220, 235, 255)     # Default key label text
-COLOR_TEXT_SPECIAL  = (130, 170, 245, 255)     # Special key label text (blue)
-COLOR_TEXT_NUMBER   = (180, 185, 200, 255)     # Number key label text
-COLOR_BORDER        = (55, 58, 88, 255)        # Key border outline
-COLOR_BLACK         = (0, 0, 0, 255)           # Blank screen fill
-COLOR_DIVIDER       = (25, 25, 40, 255)        # Row divider line
+COLOR_BACKGROUND    = (12, 12, 20, 255)
+COLOR_BLACK         = (0, 0, 0, 255)
+COLOR_DIVIDER       = (20, 20, 32, 255)
+
+# Key face colors
+COLOR_KEY_LETTER    = (50, 54, 82, 255)       # Letter key face
+COLOR_KEY_DEFAULT   = (40, 42, 65, 255)       # Non-letter key face
+COLOR_KEY_SPECIAL   = (32, 34, 55, 255)       # Action key face
+COLOR_KEY_NUMBER    = (35, 38, 58, 255)       # Number key face
+
+# Pixel-art bevel colors (3D raised effect)
+COLOR_BEVEL_LIGHT   = (78, 82, 115, 255)      # Top + left edges (highlight)
+COLOR_BEVEL_DARK    = (22, 24, 40, 255)       # Bottom + right edges (shadow)
+
+# Pressed state: inverted bevel (sunken)
+COLOR_PRESS_FACE    = (30, 30, 50, 255)       # Sunken face
+COLOR_PRESS_LIGHT   = (22, 24, 40, 255)       # Inner top (shadow when pressed)
+COLOR_PRESS_DARK    = (60, 64, 90, 255)       # Inner bottom (light when pressed)
+
+# Text colors
+COLOR_TEXT_DEFAULT  = (220, 225, 240, 255)
+COLOR_TEXT_SPECIAL  = (130, 170, 245, 255)
+COLOR_TEXT_NUMBER   = (170, 178, 200, 255)
+COLOR_TEXT_DIM      = (90, 95, 120, 255)       # Dimmed text (options labels)
+
+# =============================================================================
+# Accent color presets — used for shift-active, pressed highlight, options UI
+# =============================================================================
+
+ACCENT_PRESETS = [
+    {'name': 'RUBY',    'color': (220, 65, 85, 255),   'hl': (255, 100, 120, 255)},
+    {'name': 'OCEAN',   'color': (50, 120, 220, 255),  'hl': (80, 150, 255, 255)},
+    {'name': 'MINT',    'color': (45, 185, 140, 255),  'hl': (70, 220, 170, 255)},
+    {'name': 'SOLAR',   'color': (230, 160, 40, 255),  'hl': (255, 195, 70, 255)},
+    {'name': 'VIOLET',  'color': (140, 70, 200, 255),  'hl': (175, 100, 240, 255)},
+    {'name': 'LIME',    'color': (120, 200, 50, 255),  'hl': (155, 235, 80, 255)},
+    {'name': 'CORAL',   'color': (240, 128, 100, 255), 'hl': (255, 165, 140, 255)},
+    {'name': 'ICE',     'color': (100, 180, 230, 255), 'hl': (140, 210, 255, 255)},
+]
+
+DEFAULT_ACCENT_INDEX = 0  # RUBY
+
+# =============================================================================
+# Brightness
+# =============================================================================
+
+BRIGHTNESS_PATH = "/sys/class/backlight"
+BRIGHTNESS_STEP = 15       # Change per tap (out of 255)
+BRIGHTNESS_MIN = 5
+BRIGHTNESS_MAX = 255
+
+# =============================================================================
+# Settings persistence
+# =============================================================================
+
+SETTINGS_FILE = "/storage/.rgds_keyboard_settings"
 
 # =============================================================================
 # evdev / input_event struct
@@ -92,7 +132,6 @@ ABS_MT_POSITION_X = 0x35
 ABS_MT_POSITION_Y = 0x36
 BTN_TOUCH = 330
 
-# ioctl codes
 EVIOCGRAB = 0x40044590
 UI_SET_EVBIT = 0x40045564
 UI_SET_KEYBIT = 0x40045565
@@ -100,7 +139,7 @@ UI_DEV_CREATE = 0x5501
 UI_DEV_DESTROY = 0x5502
 
 # =============================================================================
-# Linux keycodes (subset used by the keyboard)
+# Linux keycodes
 # =============================================================================
 
 KEY_ESC = 1
@@ -123,7 +162,6 @@ KEY_LEFTALT = 56;   KEY_SPACE = 57
 KEY_UP = 103;   KEY_LEFT = 105; KEY_RIGHT = 106; KEY_DOWN = 108
 KEY_HOME = 102; KEY_END = 107;  KEY_DELETE = 111; KEY_INSERT = 110
 
-# All keycodes to register with uinput
 ALL_KEYCODES = [
     KEY_ESC, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9,
     KEY_0, KEY_MINUS, KEY_EQUAL, KEY_BACKSPACE, KEY_TAB,

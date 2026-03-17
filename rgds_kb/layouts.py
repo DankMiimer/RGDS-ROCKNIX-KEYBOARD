@@ -1,25 +1,11 @@
 """
-layouts.py — Keyboard layout definitions for all four layers.
+layouts.py — Keyboard layout definitions for all five layers.
 
-Each layout is a dict with:
-  - name: str — layer identifier ('main', 'shift', 'symbols', 'nav')
-  - rows: list of row dicts
+Layers: main (lowercase), shift (uppercase), symbols, nav, options.
 
-Each row dict:
-  - y: int — vertical pixel offset from top of screen
-  - h: int — row height in pixels
-  - keys: list of key dicts
-
-Each key dict:
-  - l: str — unique label/ID (used for press tracking and repeat identification)
-  - d: str — display string (rendered on the key face)
-  - c: int|None — Linux keycode to emit (None for action-only keys)
-  - s: bool — whether to hold Shift when emitting this keycode
-  - w: float — relative width weight (keys are proportionally sized within the row)
-  - a: str|None — (optional) action: 'shift', 'unshift', 'symbols', 'main', 'nav'
-
-To add a new key: append a key dict to the appropriate row's 'keys' list.
-To add a new layer: create a new layout dict and return it from build_layouts().
+Numbers are placed as the top row on main/shift/symbols layouts.
+Main shows lowercase letters (a, b, c...), shift shows uppercase (A, B, C...).
+Options layer has accent color swatches and brightness controls.
 """
 
 from .constants import (
@@ -36,23 +22,15 @@ from .constants import (
 )
 
 # =============================================================================
-# Helper to build a key dict concisely
+# Helpers
 # =============================================================================
 
-def _key(label, display, keycode, shift=False, width=1.0, action=None):
-    """Build a key definition dict.
-
-    Args:
-        label:   Unique ID string for this key
-        display: Text drawn on the key face
-        keycode: Linux KEY_* code, or None for action-only keys
-        shift:   If True, Shift is held when emitting the keycode
-        width:   Relative width weight (1.0 = standard key)
-        action:  Layer-switch action string, or None
-    """
+def _key(label, display, keycode, shift=False, width=1.0, action=None, **extra):
+    """Build a key definition dict."""
     key = {'l': label, 'd': display, 'c': keycode, 's': shift, 'w': width}
     if action:
         key['a'] = action
+    key.update(extra)
     return key
 
 
@@ -62,132 +40,133 @@ def _row(y, h, keys):
 
 
 # =============================================================================
-# Main layout (lowercase QWERTY)
+# Shared rows
+# =============================================================================
+
+def _number_row():
+    """Number row — always at the top, y=0, h=48."""
+    return _row(0, 48, [
+        _key('1', '1', KEY_1), _key('2', '2', KEY_2), _key('3', '3', KEY_3),
+        _key('4', '4', KEY_4), _key('5', '5', KEY_5), _key('6', '6', KEY_6),
+        _key('7', '7', KEY_7), _key('8', '8', KEY_8), _key('9', '9', KEY_9),
+        _key('0', '0', KEY_0),
+    ])
+
+
+# =============================================================================
+# Main layout — lowercase display
 # =============================================================================
 
 def _build_main():
     return {'name': 'main', 'rows': [
-        # Row 0: QWERTY top row
-        _row(0, 95, [
-            _key('q', 'Q', KEY_Q), _key('w', 'W', KEY_W), _key('e', 'E', KEY_E),
-            _key('r', 'R', KEY_R), _key('t', 'T', KEY_T), _key('y', 'Y', KEY_Y),
-            _key('u', 'U', KEY_U), _key('i', 'I', KEY_I), _key('o', 'O', KEY_O),
-            _key('p', 'P', KEY_P),
+        _number_row(),
+        # QWERTY — lowercase display
+        _row(51, 88, [
+            _key('q', 'q', KEY_Q), _key('w', 'w', KEY_W), _key('e', 'e', KEY_E),
+            _key('r', 'r', KEY_R), _key('t', 't', KEY_T), _key('y', 'y', KEY_Y),
+            _key('u', 'u', KEY_U), _key('i', 'i', KEY_I), _key('o', 'o', KEY_O),
+            _key('p', 'p', KEY_P),
         ]),
-        # Row 1: ASDF middle row
-        _row(98, 95, [
-            _key('a', 'A', KEY_A), _key('s2', 'S', KEY_S), _key('d2', 'D', KEY_D),
-            _key('f', 'F', KEY_F), _key('g', 'G', KEY_G), _key('h', 'H', KEY_H),
-            _key('j', 'J', KEY_J), _key('k', 'K', KEY_K), _key('l2', 'L', KEY_L),
+        # ASDF — lowercase
+        _row(142, 88, [
+            _key('a', 'a', KEY_A), _key('s2', 's', KEY_S), _key('d2', 'd', KEY_D),
+            _key('f', 'f', KEY_F), _key('g', 'g', KEY_G), _key('h', 'h', KEY_H),
+            _key('j', 'j', KEY_J), _key('k', 'k', KEY_K), _key('l2', 'l', KEY_L),
         ]),
-        # Row 2: SHIFT + ZXCV + BACKSPACE
-        _row(196, 95, [
+        # SHIFT + ZXCV + BKSP — lowercase
+        _row(233, 88, [
             _key('shift', 'SHIFT', None, action='shift', width=1.4),
-            _key('z', 'Z', KEY_Z), _key('x', 'X', KEY_X), _key('c2', 'C', KEY_C),
-            _key('v', 'V', KEY_V), _key('b', 'B', KEY_B), _key('n', 'N', KEY_N),
-            _key('m', 'M', KEY_M),
+            _key('z', 'z', KEY_Z), _key('x', 'x', KEY_X), _key('c2', 'c', KEY_C),
+            _key('v', 'v', KEY_V), _key('b', 'b', KEY_B), _key('n', 'n', KEY_N),
+            _key('m', 'm', KEY_M),
             _key('bksp', '\u232B', KEY_BACKSPACE, width=1.4),
         ]),
-        # Row 3: Symbols toggle, comma, SPACE, dot, ENTER
-        _row(294, 75, [
+        # Utility: symbols, comma, SPACE, dot, ENTER
+        _row(324, 64, [
             _key('sym', '#+', None, action='symbols', width=1.2),
             _key('comma', ',', KEY_COMMA, width=0.8),
-            _key('space', 'SPACE', KEY_SPACE, width=4.5),
+            _key('space', 'SPACE', KEY_SPACE, width=4.0),
             _key('dot', '.', KEY_DOT, width=0.8),
             _key('enter', 'RET', KEY_ENTER, width=1.2),
         ]),
-        # Row 4: Number row
-        _row(372, 50, [
-            _key('1', '1', KEY_1), _key('2', '2', KEY_2), _key('3', '3', KEY_3),
-            _key('4', '4', KEY_4), _key('5', '5', KEY_5), _key('6', '6', KEY_6),
-            _key('7', '7', KEY_7), _key('8', '8', KEY_8), _key('9', '9', KEY_9),
-            _key('0', '0', KEY_0),
-        ]),
-        # Row 5: Utility row
-        _row(425, 52, [
+        # Bottom utility: TAB, ESC, NAV, punctuation, OPT
+        _row(391, 52, [
             _key('tab', 'TAB', KEY_TAB),
             _key('esc', 'ESC', KEY_ESC),
             _key('nav', 'NAV', None, action='nav'),
             _key('dash', '-', KEY_MINUS, width=0.8),
             _key('qmark', '?', KEY_SLASH, shift=True, width=0.8),
             _key('excl', '!', KEY_1, shift=True, width=0.8),
-            _key('at', '@', KEY_2, shift=True, width=0.8),
+            _key('opt', '\u2699', None, action='options', width=0.8),
         ]),
     ]}
 
 
 # =============================================================================
-# Shift layout (uppercase + shifted symbols)
+# Shift layout — UPPERCASE display
 # =============================================================================
 
 def _build_shift(main_layout):
     rows = []
 
-    # Rows 0-1: same letter keys but with shift=True
-    for row in main_layout['rows'][:2]:
+    # Number row (same)
+    rows.append(_number_row())
+
+    # Letter rows 1-2: uppercase display + shift=True for keycode
+    for row in main_layout['rows'][1:3]:
         rows.append(_row(row['y'], row['h'], [
-            {**k, 's': True} for k in row['keys']
+            {**k, 'd': k['d'].upper(), 's': True} for k in row['keys']
         ]))
 
-    # Row 2: UNSHIFT + shifted letters + backspace
-    shift_row2_keys = []
-    for k in main_layout['rows'][2]['keys']:
+    # Row 3: UNSHIFT + uppercase letters + backspace
+    shift_row3_keys = []
+    for k in main_layout['rows'][3]['keys']:
         nk = dict(k)
         if nk['l'] == 'shift':
             nk['a'] = 'unshift'
         elif nk['c'] is not None and nk['l'] != 'bksp':
+            nk['d'] = nk['d'].upper()
             nk['s'] = True
-        shift_row2_keys.append(nk)
-    rows.append(_row(196, 95, shift_row2_keys))
+        shift_row3_keys.append(nk)
+    rows.append(_row(233, 88, shift_row3_keys))
 
-    # Row 3: Symbols toggle, semicolon, SPACE, colon, ENTER
-    rows.append(_row(294, 75, [
+    # Space row with ; and :
+    rows.append(_row(324, 64, [
         _key('sym', '#+', None, action='symbols', width=1.2),
         _key('semi', ';', KEY_SEMICOLON, width=0.8),
-        _key('space', 'SPACE', KEY_SPACE, width=4.5),
+        _key('space', 'SPACE', KEY_SPACE, width=4.0),
         _key('colon', ':', KEY_SEMICOLON, shift=True, width=0.8),
         _key('enter', 'RET', KEY_ENTER, width=1.2),
     ]))
 
-    # Row 4: Shifted number row → ! @ # $ % ^ & * ( )
-    shifted_symbols = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')']
-    rows.append(_row(372, 50, [
-        {**dict(k), 'd': shifted_symbols[i], 's': True}
-        for i, k in enumerate(main_layout['rows'][4]['keys'])
-    ]))
-
-    # Row 5: Shifted utility row
-    rows.append(_row(425, 52, [
+    # Bottom utility (shifted)
+    rows.append(_row(391, 52, [
         _key('tab', 'TAB', KEY_TAB),
         _key('esc', 'ESC', KEY_ESC),
         _key('nav', 'NAV', None, action='nav'),
         _key('under', '_', KEY_MINUS, shift=True, width=0.8),
         _key('apos', "'", KEY_APOSTROPHE, width=0.8),
         _key('quot', '"', KEY_APOSTROPHE, shift=True, width=0.8),
-        _key('hash', '#', KEY_3, shift=True, width=0.8),
+        _key('opt', '\u2699', None, action='options', width=0.8),
     ]))
 
     return {'name': 'shift', 'rows': rows}
 
 
 # =============================================================================
-# Symbols layout (brackets, punctuation, operators)
+# Symbols layout
 # =============================================================================
 
 def _build_symbols(main_layout):
-    # Three rows of symbol pairs: (display_char, keycode, shift_required)
     symbol_rows = [
-        # Row 0
         [('!', KEY_1, True), ('@', KEY_2, True), ('#', KEY_3, True),
          ('$', KEY_4, True), ('%', KEY_5, True), ('^', KEY_6, True),
          ('&', KEY_7, True), ('*', KEY_8, True), ('(', KEY_9, True),
          (')', KEY_0, True)],
-        # Row 1
         [('-', KEY_MINUS, False), ('_', KEY_MINUS, True), ('+', KEY_EQUAL, True),
          ('=', KEY_EQUAL, False), ('[', KEY_LEFTBRACE, False), (']', KEY_RIGHTBRACE, False),
          ('{', KEY_LEFTBRACE, True), ('}', KEY_RIGHTBRACE, True),
          ('|', KEY_BACKSLASH, True), ('\\', KEY_BACKSLASH, False)],
-        # Row 2
         [(':', KEY_SEMICOLON, True), (';', KEY_SEMICOLON, False),
          ("'", KEY_APOSTROPHE, False), ('"', KEY_APOSTROPHE, True),
          ('`', KEY_GRAVE, False), ('~', KEY_GRAVE, True),
@@ -195,62 +174,106 @@ def _build_symbols(main_layout):
          ('/', KEY_SLASH, False), ('?', KEY_SLASH, True)],
     ]
 
-    rows = []
-    y_positions = [0, 98, 196]
+    rows = [_number_row()]  # Numbers on top
+    y_offsets = [51, 142, 233]
     for i, sym_keys in enumerate(symbol_rows):
-        rows.append(_row(y_positions[i], 95, [
+        rows.append(_row(y_offsets[i], 88, [
             _key(d, d, c, shift=s) for d, c, s in sym_keys
         ]))
 
-    # Row 3: ABC return, SPACE, BKSP, ENTER
-    rows.append(_row(294, 75, [
+    rows.append(_row(324, 64, [
         _key('abc', 'ABC', None, action='main', width=1.5),
-        _key('space', 'SPACE', KEY_SPACE, width=4.0),
+        _key('space', 'SPACE', KEY_SPACE, width=3.5),
         _key('bksp2', '\u232B', KEY_BACKSPACE, width=1.5),
         _key('enter2', 'RET', KEY_ENTER, width=1.5),
     ]))
 
-    # Row 4: Number row (same as main)
-    rows.append(dict(main_layout['rows'][4]))
-
-    # Row 5: Minimal utility
-    rows.append(_row(425, 52, [
+    rows.append(_row(391, 52, [
         _key('tab', 'TAB', KEY_TAB),
         _key('esc', 'ESC', KEY_ESC),
         _key('nav', 'NAV', None, action='nav'),
+        _key('opt', '\u2699', None, action='options', width=0.8),
     ]))
 
     return {'name': 'symbols', 'rows': rows}
 
 
 # =============================================================================
-# Navigation layout (arrows, home/end, insert/delete)
+# Navigation layout
 # =============================================================================
 
 def _build_nav():
     return {'name': 'nav', 'rows': [
-        _row(0, 120, [
+        _row(0, 110, [
             _key('home', 'HOME', KEY_HOME), _key('up', '\u2191', KEY_UP),
             _key('end', 'END', KEY_END),    _key('del', 'DEL', KEY_DELETE),
         ]),
-        _row(123, 120, [
+        _row(113, 110, [
             _key('left', '\u2190', KEY_LEFT), _key('down', '\u2193', KEY_DOWN),
             _key('right', '\u2192', KEY_RIGHT), _key('ins', 'INS', KEY_INSERT),
         ]),
-        _row(246, 100, [
+        _row(226, 90, [
             _key('tab2', 'TAB', KEY_TAB),      _key('esc2', 'ESC', KEY_ESC),
             _key('bksp3', 'BKSP', KEY_BACKSPACE), _key('enter3', 'RET', KEY_ENTER),
         ]),
-        _row(349, 68, [
+        _row(319, 68, [
             _key('space', 'SPACE', KEY_SPACE, width=3.0),
             _key('abc2', 'ABC', None, action='main'),
             _key('sym2', '#+', None, action='symbols'),
         ]),
-        _row(420, 57, [
+        _row(390, 52, [
             _key('1', '1', KEY_1), _key('2', '2', KEY_2), _key('3', '3', KEY_3),
             _key('4', '4', KEY_4), _key('5', '5', KEY_5), _key('6', '6', KEY_6),
             _key('7', '7', KEY_7), _key('8', '8', KEY_8), _key('9', '9', KEY_9),
             _key('0', '0', KEY_0),
+        ]),
+    ]}
+
+
+# =============================================================================
+# Options layout — accent color picker + brightness control
+# =============================================================================
+
+def _build_options():
+    """Options menu with color swatches and brightness controls.
+
+    Key properties:
+      - accent_idx: int — which ACCENT_PRESETS entry this swatch represents
+      - action: 'accent_N' for color picks, 'bright_up'/'bright_down' for brightness
+    """
+    return {'name': 'options', 'rows': [
+        # Header row: BACK button
+        _row(5, 62, [
+            _key('opt_back', 'BACK', None, action='main', width=1.5),
+            _key('opt_title', 'COLOR', None, width=3.0),  # Non-interactive label
+        ]),
+        # Color row 1: first 4 presets
+        _row(70, 95, [
+            _key('accent_0', 'RUBY',   None, action='accent_0', width=1, accent_idx=0),
+            _key('accent_1', 'OCEAN',  None, action='accent_1', width=1, accent_idx=1),
+            _key('accent_2', 'MINT',   None, action='accent_2', width=1, accent_idx=2),
+            _key('accent_3', 'SOLAR',  None, action='accent_3', width=1, accent_idx=3),
+        ]),
+        # Color row 2: next 4 presets
+        _row(168, 95, [
+            _key('accent_4', 'VIOLET', None, action='accent_4', width=1, accent_idx=4),
+            _key('accent_5', 'LIME',   None, action='accent_5', width=1, accent_idx=5),
+            _key('accent_6', 'CORAL',  None, action='accent_6', width=1, accent_idx=6),
+            _key('accent_7', 'ICE',    None, action='accent_7', width=1, accent_idx=7),
+        ]),
+        # Brightness header
+        _row(275, 50, [
+            _key('br_label', 'BRIGHTNESS', None, width=1.0),
+        ]),
+        # Brightness controls
+        _row(328, 80, [
+            _key('br_down', '-', None, action='bright_down', width=1.5),
+            _key('br_bar', 'LIGHT', None, width=4.0),  # Display-only brightness indicator
+            _key('br_up', '+', None, action='bright_up', width=1.5),
+        ]),
+        # Bottom back
+        _row(415, 55, [
+            _key('opt_back2', 'BACK', None, action='main', width=1.0),
         ]),
     ]}
 
@@ -271,5 +294,6 @@ def build_layouts():
         'shift': _build_shift(main),
         'symbols': _build_symbols(main),
         'nav': _build_nav(),
+        'options': _build_options(),
     }
     return layouts

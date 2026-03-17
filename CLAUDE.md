@@ -57,15 +57,16 @@ rgds-keyboard/
 ├── rgds_keyboard.py       ← Main entry point (imports and runs)
 └── rgds_kb/               ← Package: all keyboard logic
     ├── __init__.py
-    ├── constants.py       ← All magic numbers, keycodes, colors, layout dims
-    ├── font.py            ← 5×7 bitmap font data and text rendering helpers
+    ├── constants.py       ← Magic numbers, keycodes, colors, accent presets, bevel sizes
+    ├── font.py            ← 5×7 bitmap font (uppercase + lowercase + symbols + icons)
     ├── sdl.py             ← SDL2 ctypes wrapper class
     ├── uinput_device.py   ← Virtual keyboard (uinput EV_KEY emitter)
     ├── touch_input.py     ← Touchscreen reader (evdev multitouch)
     ├── joypad.py          ← R3 button monitor thread
-    ├── layouts.py         ← Keyboard layout definitions (main/shift/symbols/nav)
-    ├── renderer.py        ← Key drawing, text rendering, screen painting
-    └── engine.py          ← Main loop: event dispatch, state machine, key repeat
+    ├── layouts.py         ← Layout definitions (main/shift/symbols/nav/options)
+    ├── renderer.py        ← Pixel-art key drawing with bevels, accent colors, options UI
+    ├── settings.py        ← Persistent settings: accent color, brightness control
+    └── engine.py          ← Main loop: state machine, options handling, key repeat
 ```
 
 ## Key Design Decisions
@@ -93,7 +94,10 @@ rgds-keyboard/
 
 ## Layout System
 
-Four layers: `main`, `shift`, `symbols`, `nav`.
+Five layers: `main`, `shift`, `symbols`, `nav`, `options`.
+
+Numbers are always the top row (y=0, h=48) on main/shift/symbols.
+Main displays lowercase letters (a, b, c), shift displays uppercase (A, B, C).
 
 Each layout is a dict with `name` and `rows`. Each row has:
 - `y`: vertical pixel offset
@@ -106,10 +110,40 @@ Each key dict:
 - `c`: Linux keycode (e.g. `KEY_A = 30`) or `None` for action-only keys
 - `s`: bool — whether Shift modifier is held when emitting this key
 - `w`: float — relative width weight (keys are proportionally sized)
-- `a`: (optional) action string: `'shift'`, `'unshift'`, `'symbols'`, `'main'`, `'nav'`
+- `a`: (optional) action string: `'shift'`, `'unshift'`, `'symbols'`, `'main'`, `'nav'`, `'options'`, `'accent_N'`, `'bright_up'`, `'bright_down'`
+- `accent_idx`: (optional, options only) int index into ACCENT_PRESETS
 
 Layout switching: pressing a key with `a='shift'` switches to the `shift` layout, etc.
 Shift auto-returns: after typing one uppercase letter, reverts to `main`.
+Options entry: gear button (`a='options'`) on utility row. Back buttons return to `main`.
+
+## Pixel-Art Rendering
+
+Keys are drawn with chunky 3px bevels and 2px corner notches:
+- Light color on top + left edges (raised highlight)
+- Dark color on bottom + right edges (shadow)
+- Corner notches cut diagonally for pixel-rounded look
+- Pressed state: bevel inverts (sunken) + text shifts down-right 1px
+- Shift-active key: filled with current accent color
+- Letter keys get an extra 1px inner shadow line at bottom for depth
+
+## Accent Color System
+
+8 color presets in `ACCENT_PRESETS` (constants.py): Ruby, Ocean, Mint, Solar, Violet, Lime, Coral, Ice.
+Each preset has `color` (face) and `hl` (highlight/bevel-light).
+The active accent colors: shift-active key fill, pressed key glow, brightness bar fill.
+Saved to `/storage/.rgds_keyboard_settings` via settings.py.
+
+## Brightness Control
+
+Reads/writes `/sys/class/backlight/*/brightness` via settings.py.
+Options menu shows a visual progress bar and +/- buttons (step size = 15).
+
+## Settings Persistence
+
+File: `/storage/.rgds_keyboard_settings` (simple key=value format).
+Currently stores: `accent_index=N` (0-7).
+Loaded on startup, saved on accent color change.
 
 ## Key Repeat
 
@@ -141,9 +175,17 @@ shift_active (sa): visual indicator for shift highlight
 
 ### Changing colors
 Edit `constants.py` — all color tuples are `(R, G, B, A)` with descriptive names.
+Pixel-art bevel colors: `COLOR_BEVEL_LIGHT`, `COLOR_BEVEL_DARK`.
+Pressed state colors: `COLOR_PRESS_FACE`, `COLOR_PRESS_LIGHT`, `COLOR_PRESS_DARK`.
+Bevel thickness: `BEVEL` (default 3). Corner notch: `NOTCH` (default 2).
 
-### Changing key repeat timing
-Edit `REPEAT_DELAY` and `REPEAT_RATE` in `constants.py`.
+### Adding a new accent color preset
+Add a dict to `ACCENT_PRESETS` in `constants.py`:
+`{'name': 'NAME', 'color': (R,G,B,255), 'hl': (R,G,B,255)}`
+Then add a matching swatch key in `layouts.py` `_build_options()`.
+
+### Changing brightness step size
+Edit `BRIGHTNESS_STEP` in `constants.py` (default 15, range 0–255).
 
 ### Adding a new font glyph
 Add the character to the `FONT` dict in `font.py`. Each glyph is 7 ints,
