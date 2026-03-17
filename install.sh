@@ -11,16 +11,21 @@ echo ""
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "[1/3] Installing keyboard app to /storage/ ..."
+echo "[1/4] Installing keyboard package to /storage/ ..."
+mkdir -p /storage/rgds_kb
+cp "$SCRIPT_DIR"/rgds_kb/*.py /storage/rgds_kb/
 cp "$SCRIPT_DIR/rgds_keyboard.py" /storage/rgds_keyboard.py
-cp "$SCRIPT_DIR/rgds-keyboard.sh" /storage/rgds-keyboard.sh
-chmod +x /storage/rgds_keyboard.py /storage/rgds-keyboard.sh
+chmod +x /storage/rgds_keyboard.py
 
-echo "[2/3] Installing EmulationStation shortcut ..."
+echo "[2/4] Installing launcher scripts ..."
+cp "$SCRIPT_DIR/rgds-keyboard.sh" /storage/rgds-keyboard.sh
+chmod +x /storage/rgds-keyboard.sh
+
+echo "[3/4] Installing EmulationStation shortcut ..."
 cp "$SCRIPT_DIR/Keyboard.sh" /storage/roms/ports/Keyboard.sh
 chmod +x /storage/roms/ports/Keyboard.sh
 
-echo "[3/3] Done!"
+echo "[4/4] Done!"
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║  How to use:                                  ║"
