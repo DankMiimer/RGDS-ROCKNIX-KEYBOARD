@@ -29,6 +29,7 @@ Then in EmulationStation: go to **Ports → Keyboard** to start/stop.
 
 ```bash
 # Copy to device via SCP
+scp -r rgds_kb/ root@<DEVICE_IP>:/storage/
 scp rgds_keyboard.py root@<DEVICE_IP>:/storage/
 scp rgds-keyboard.sh root@<DEVICE_IP>:/storage/
 scp Keyboard.sh root@<DEVICE_IP>:/storage/roms/ports/
@@ -88,6 +89,30 @@ Arrow keys, Home, End, Delete, Insert — for text editing.
 - **Touch Isolation** — bottom touchscreen is captured when keyboard is visible, released when hidden
 - **Crash Safety** — `atexit` handler releases all grabbed input devices
 
+## Project Structure
+
+```
+rgds-keyboard/
+├── CLAUDE.md              # LLM context (architecture, patterns, conventions)
+├── README.md              # This file
+├── LICENSE                # MIT
+├── install.sh             # One-command device installer
+├── rgds-keyboard.sh       # CLI launcher (start/stop/restart)
+├── Keyboard.sh            # EmulationStation Ports entry
+├── rgds_keyboard.py       # Entry point (imports and runs rgds_kb.engine)
+└── rgds_kb/               # Core package
+    ├── __init__.py        # Package metadata
+    ├── constants.py       # Device paths, keycodes, colors, timing
+    ├── font.py            # 5×7 bitmap font data and text helpers
+    ├── sdl.py             # SDL2 ctypes wrapper
+    ├── uinput_device.py   # Virtual keyboard (uinput EV_KEY emitter)
+    ├── touch_input.py     # Touchscreen reader (raw evdev multitouch)
+    ├── joypad.py          # R3 button monitor thread
+    ├── layouts.py         # Keyboard layout definitions (4 layers)
+    ├── renderer.py        # Key drawing and screen painting
+    └── engine.py          # Main loop, state machine, key repeat
+```
+
 ## Compatibility
 
 Tested and working with:
@@ -116,18 +141,10 @@ Touch (Goodix /dev/input/event2)
 - **Window routing**: Title contains `[Bottom]` which triggers ROCKNIX's built-in sway rule to auto-route to DSI-1
 - **Screen power**: Periodically calls `swaymsg output DSI-1 power on` to counter EmulationStation's power-off rule
 
-## Files
-
-| File | Installs to | Purpose |
-|------|------------|---------|
-| `rgds_keyboard.py` | `/storage/` | Main keyboard application |
-| `rgds-keyboard.sh` | `/storage/` | CLI launcher (start/stop/restart) |
-| `Keyboard.sh` | `/storage/roms/ports/` | EmulationStation Ports entry |
-| `install.sh` | — | One-command installer |
-
 ## Uninstall
 
 ```bash
+rm -rf /storage/rgds_kb/
 rm /storage/rgds_keyboard.py
 rm /storage/rgds-keyboard.sh
 rm /storage/roms/ports/Keyboard.sh
@@ -141,11 +158,13 @@ rm /storage/roms/ports/Keyboard.sh
 | Bottom screen stays off | `swaymsg 'output DSI-1 power on'` via SSH |
 | Controls frozen after crash | Reboot the device |
 | No input in apps | Verify with `evtest /dev/input/event7` while tapping keys |
-| Shortcut missing after reboot | Make sure `Keyboard.sh` is in `/storage/roms/ports/` (not `/storage/.config/modules/`) |
+| Shortcut missing after reboot | Make sure `Keyboard.sh` is in `/storage/roms/ports/` |
 
 ## Contributing
 
-This is an early proof-of-concept. Areas for improvement:
+See `CLAUDE.md` for architecture details and modification patterns.
+
+Areas for improvement:
 
 - **Better font rendering** — TTF/FreeType instead of bitmap font
 - **Swipe typing** — gesture-based input
@@ -153,7 +172,7 @@ This is an early proof-of-concept. Areas for improvement:
 - **Word prediction** — autocomplete bar
 - **Multi-language layouts** — AZERTY, QWERTZ, Cyrillic, etc.
 - **Haptic feedback** — vibration motor on keypress
-- **Integration with ES-DE** — auto-launch when apps need keyboard input
+- **Auto-detect input devices** — scan `/dev/input/` instead of hardcoded paths
 
 PRs welcome!
 
