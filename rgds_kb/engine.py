@@ -22,7 +22,7 @@ from .constants import (
     WINDOW_TITLE, REASSERT_INTERVAL,
     TOUCH_DEVICE, JOYPAD_DEVICE, BTN_THUMBR,
     REPEAT_DELAY, REPEAT_RATE, REPEATABLE_KEYS,
-    ACCENT_PRESETS, BRIGHTNESS_MAX,
+    ACCENT_PRESETS,
 )
 from .sdl import SDL
 from .uinput_device import UinputDevice
@@ -31,8 +31,8 @@ from .joypad import JoypadMonitor
 from .layouts import build_layouts
 from .renderer import compute_key_rects, draw_keyboard, draw_blank
 from .settings import (
-    load_settings, save_settings,
-    get_brightness, brightness_up, brightness_down,
+    load_settings, save_settings, apply_brightness,
+    brightness_up, brightness_down,
 )
 
 
@@ -113,6 +113,8 @@ def run():
     settings = load_settings()
     accent_index = settings['accent_index']
     accent = ACCENT_PRESETS[accent_index]
+    brightness_val = settings['brightness']  # 0.0–1.0
+    apply_brightness(brightness_val)         # Apply saved brightness to DSI-1
 
     # ── State ──────────────────────────────────────────────────────────────
     visible = False
@@ -146,12 +148,9 @@ def run():
     joypad.start()
     print("[engine] Running — press R3 to toggle keyboard")
 
-    # ── Helper: get brightness as 0.0–1.0 ─────────────────────────────────
+    # ── Helper: brightness as 0.0–1.0 ────────────────────────────────────
     def _brightness_pct():
-        br = get_brightness()
-        if br < 0:
-            return 0.5
-        return br / BRIGHTNESS_MAX
+        return brightness_val
 
     # ── Main loop ──────────────────────────────────────────────────────────
     try:
@@ -217,15 +216,17 @@ def run():
                                 if 0 <= idx < len(ACCENT_PRESETS):
                                     accent_index = idx
                                     accent = ACCENT_PRESETS[idx]
-                                    save_settings(accent_index)
+                                    save_settings(accent_index, brightness_val)
                                     needs_redraw = True
 
                             elif action == 'bright_up':
-                                brightness_up()
+                                brightness_val = brightness_up(brightness_val)
+                                save_settings(accent_index, brightness_val)
                                 needs_redraw = True
 
                             elif action == 'bright_down':
-                                brightness_down()
+                                brightness_val = brightness_down(brightness_val)
+                                save_settings(accent_index, brightness_val)
                                 needs_redraw = True
 
                             # ── Options layer entry ────────────────────────

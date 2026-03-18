@@ -48,12 +48,13 @@ REPEATABLE_KEYS = frozenset({
 })
 
 # =============================================================================
-# Layout geometry
+# Layout geometry — big-pixel grid
 # =============================================================================
 
-GAP = 3
-BEVEL = 3   # Pixel-art bevel thickness (chunky 3D edges)
-NOTCH = 2   # Corner notch size for pixel-rounded look
+PX = 2      # 1 "big pixel" = 2×2 screen pixels. All art aligns to this grid.
+GAP = 2 * PX    # 4 screen px (2 big px) between keys and at screen edge
+BEVEL = 3 * PX  # 6 screen px (3 big px) bevel thickness
+NOTCH = 2 * PX  # 4 screen px (2 big px) corner notch cut
 
 # =============================================================================
 # Base colors — all (R, G, B, A) tuples
@@ -102,13 +103,12 @@ ACCENT_PRESETS = [
 DEFAULT_ACCENT_INDEX = 0  # RUBY
 
 # =============================================================================
-# Brightness
+# Brightness (DSI-1 bottom screen via swaymsg)
 # =============================================================================
 
-BRIGHTNESS_PATH = "/sys/class/backlight"
-BRIGHTNESS_STEP = 15       # Change per tap (out of 255)
-BRIGHTNESS_MIN = 5
-BRIGHTNESS_MAX = 255
+BRIGHTNESS_STEP = 0.08     # Change per tap (0.0–1.0 range)
+BRIGHTNESS_MIN = 0.05      # Minimum (don't go full black)
+BRIGHTNESS_MAX = 1.0       # Maximum
 
 # =============================================================================
 # Settings persistence

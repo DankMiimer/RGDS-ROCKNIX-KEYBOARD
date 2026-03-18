@@ -1,45 +1,36 @@
 """
-settings.py — Persistent settings: accent color index and screen brightness.
+settings.py — Persistent settings: accent color and DSI-1 screen brightness.
 
-Saves to /storage/.rgds_keyboard_settings as simple key=value lines.
-Brightness is controlled via /sys/class/backlight/*/brightness.
+Brightness is controlled via `swaymsg output DSI-1 brightness <0.0-1.0>`,
+which targets the bottom screen specifically. The old sysfs approach
+(/sys/class/backlight/*) was hitting the top screen.
+
+Settings saved to /storage/.rgds_keyboard_settings as key=value lines.
 """
 
-import glob
+import json
 import os
+import subprocess
 
 from .constants import (
-    SETTINGS_FILE, BRIGHTNESS_PATH,
+    SETTINGS_FILE,
     BRIGHTNESS_STEP, BRIGHTNESS_MIN, BRIGHTNESS_MAX,
     ACCENT_PRESETS, DEFAULT_ACCENT_INDEX,
 )
 
 
-def _find_backlight():
-    """Find the first backlight sysfs path, or None."""
-    paths = glob.glob(os.path.join(BRIGHTNESS_PATH, "*", "brightness"))
-    return paths[0] if paths else None
-
-
-def _find_max_brightness():
-    """Read the max_brightness value from sysfs."""
-    paths = glob.glob(os.path.join(BRIGHTNESS_PATH, "*", "max_brightness"))
-    if paths:
-        try:
-            with open(paths[0], 'r') as f:
-                return int(f.read().strip())
-        except (IOError, ValueError):
-            pass
-    return BRIGHTNESS_MAX
-
+# =============================================================================
+# Settings persistence
+# =============================================================================
 
 def load_settings():
-    """Load settings from disk. Returns dict with 'accent_index' and 'brightness'.
+    """Load settings from disk.
 
-    Missing or corrupt file → returns defaults.
+    Returns dict with 'accent_index' (int) and 'brightness' (float 0.0–1.0).
     """
     settings = {
         'accent_index': DEFAULT_ACCENT_INDEX,
+        'brightness': 0.6,
     }
 
     try:
@@ -54,63 +45,81 @@ def load_settings():
                         idx = int(val)
                         if 0 <= idx < len(ACCENT_PRESETS):
                             settings['accent_index'] = idx
+                    elif key == 'brightness':
+                        br = float(val)
+                        if BRIGHTNESS_MIN <= br <= BRIGHTNESS_MAX:
+                            settings['brightness'] = br
     except (IOError, ValueError):
         pass
 
     return settings
 
 
-def save_settings(accent_index):
+def save_settings(accent_index, brightness):
     """Write settings to disk."""
     try:
         with open(SETTINGS_FILE, 'w') as f:
             f.write(f"accent_index={accent_index}\n")
+            f.write(f"brightness={brightness:.2f}\n")
     except IOError as err:
         print(f"[settings] Save failed: {err}")
 
 
-def get_brightness():
-    """Read current screen brightness (0–max_brightness). Returns -1 on failure."""
-    path = _find_backlight()
-    if not path:
-        return -1
+# =============================================================================
+# DSI-1 brightness via swaymsg
+# =============================================================================
+
+def _sway_cmd(cmd):
+    """Run a swaymsg command, return stdout or None on failure."""
     try:
-        with open(path, 'r') as f:
-            return int(f.read().strip())
-    except (IOError, ValueError):
-        return -1
+        result = subprocess.run(
+            ['swaymsg', cmd], capture_output=True, timeout=2, text=True,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        return None
 
 
-def set_brightness(value):
-    """Write screen brightness value. Clamps to [BRIGHTNESS_MIN, max_brightness]."""
-    path = _find_backlight()
-    if not path:
-        return False
-    max_br = _find_max_brightness()
-    value = max(BRIGHTNESS_MIN, min(max_br, value))
+def apply_brightness(value):
+    """Set DSI-1 bottom screen brightness via swaymsg.
+
+    Args:
+        value: float 0.0–1.0 (clamped to BRIGHTNESS_MIN..BRIGHTNESS_MAX)
+
+    Returns:
+        The clamped value that was applied.
+    """
+    value = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, value))
+    _sway_cmd(f'output DSI-1 brightness {value:.2f}')
+    return value
+
+
+def get_brightness_from_sway():
+    """Try to read DSI-1 brightness from sway. Returns float or None."""
+    output = _sway_cmd('-t get_outputs -r')
+    if not output:
+        return None
     try:
-        with open(path, 'w') as f:
-            f.write(str(value))
-        return True
-    except IOError:
-        return False
+        outputs = json.loads(output)
+        for o in outputs:
+            if o.get('name') == 'DSI-1':
+                # Sway stores this as a float like 0.6 or 1.0
+                # The field is called 'brightness' if available
+                br = o.get('brightness')
+                if br is not None:
+                    return float(br)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
 
 
-def brightness_up():
-    """Increase brightness by one step. Returns new value or -1."""
-    cur = get_brightness()
-    if cur < 0:
-        return -1
-    new = cur + BRIGHTNESS_STEP
-    set_brightness(new)
-    return get_brightness()
+def brightness_up(current):
+    """Increase brightness by one step. Returns new value."""
+    new = min(BRIGHTNESS_MAX, current + BRIGHTNESS_STEP)
+    return apply_brightness(new)
 
 
-def brightness_down():
-    """Decrease brightness by one step. Returns new value or -1."""
-    cur = get_brightness()
-    if cur < 0:
-        return -1
-    new = cur - BRIGHTNESS_STEP
-    set_brightness(new)
-    return get_brightness()
+def brightness_down(current):
+    """Decrease brightness by one step. Returns new value."""
+    new = max(BRIGHTNESS_MIN, current - BRIGHTNESS_STEP)
+    return apply_brightness(new)
