@@ -69,7 +69,11 @@ def _parse_proc_devices():
                     if p.startswith("event"):
                         dev["event_path"] = f"/dev/input/{p}"
             elif line.startswith("B: EV="):
-                dev["ev_bits"] = int(line.split("=", 1)[1].strip(), 16)
+                words = line.split("=", 1)[1].strip().split()
+                val = 0
+                for w in words:
+                    val = (val << (len(w) * 4)) | int(w, 16)
+                dev["ev_bits"] = val
             elif line.startswith("B: ABS="):
                 # ABS bitmap can be multiple hex words (MSB first)
                 words = line.split("=", 1)[1].strip().split()
@@ -94,7 +98,11 @@ def _parse_proc_devices():
                     idx += 1
                 dev["key_bits"] = bits
             elif line.startswith("B: FF="):
-                dev["ff_bits"] = int(line.split("=", 1)[1].strip(), 16)
+                words = line.split("=", 1)[1].strip().split()
+                val = 0
+                for w in words:
+                    val = (val << (len(w) * 4)) | int(w, 16)
+                dev["ff_bits"] = val
         if dev["event_path"]:
             devices.append(dev)
     return devices
