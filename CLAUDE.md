@@ -1,223 +1,95 @@
 # CLAUDE.md — RGDS Virtual Keyboard
 
-> Context file for LLM-assisted development. Read this before making changes.
+Session context for future Claude instances. Read this before modifying any source.
 
 ## Project Overview
 
-A touchscreen virtual keyboard for the **Anbernic RG DS** handheld running **ROCKNIX** (Linux).
-Renders on the bottom screen (DSI-1), injects keystrokes via uinput to whatever app runs on the top screen.
-Toggle visibility with **R3** (right stick click).
+Custom virtual touchscreen keyboard for the Anbernic RG DS handheld running ROCKNIX Linux. Renders a phone-style keyboard on the bottom screen (DSI-1), injects keystrokes via uinput to apps on the top screen (DSI-2).
 
-## Target Environment
+## Architecture (v5)
 
-| Property          | Value                                              |
-|-------------------|----------------------------------------------------|
-| Device            | Anbernic RG DS (dual 640×480 screens, RK3568 SoC)  |
-| OS                | ROCKNIX nightly (Buildroot Linux, Sway/Wayland)     |
-| Python            | 3.x (system Python, no pip — zero external deps)    |
-| Display server    | Sway (Wayland compositor)                           |
-| Bottom screen     | DSI-1, 640×480, Goodix capacitive touch             |
-| Touch device      | `/dev/input/event2` (multitouch, ABS_MT_*)          |
-| Joypad device     | `/dev/input/event6` (R3 = BTN_THUMBR = 318)         |
-| Virtual KB output | `/dev/uinput` (EV_KEY injection)                    |
-| SDL library       | `libSDL2-2.0.so.0` loaded via ctypes (Wayland backend) |
-| Install location  | `/storage/rgds_keyboard.py` on device               |
-| Log file          | `/tmp/rgds_keyboard.log`                            |
+Multi-module package in `/storage/rgds-keyboard/`:
 
-## Architecture
+| Module | Responsibility |
+|--------|---------------|
+| `main.py` | Entry point, epoll event loop (selectors), touch/joypad handling, signal dispatch |
+| `config.py` | 8 theme palettes, JSON settings persistence at `/storage/.config/rgds-keyboard/config.json` |
+| `devices.py` | Auto-detect touchscreen/joypad/haptic via `/proc/bus/input/devices` parsing |
+| `font.py` | Embedded 5×7 bitmap font glyph data |
+| `layouts.py` | Keyboard layout definitions (main/shift/symbols/nav), keycode constants, rect computation |
+| `renderer.py` | Dirty-region rendering with SDL2 render-target texture caching |
+| `sdl2.py` | SDL2 ctypes bindings including texture/render-target support |
+| `uinput_kb.py` | Virtual keyboard creation and keystroke injection via `/dev/uinput` |
 
-```
-Touch (Goodix /dev/input/event2)
-  → TouchInput reads raw multitouch events
-  → KeyboardEngine maps touch coords to key grid
-  → UinputDevice writes EV_KEY to /dev/uinput
-  → Linux kernel delivers to Sway compositor
-  → Sway delivers to focused app on top screen
+## Critical Design Rules
 
-Joypad (/dev/input/event6)
-  → JoypadMonitor watches for BTN_THUMBR (R3)
-  → Toggles keyboard visibility on/off
+These were learned through debugging on real hardware. Violating them **will** cause breakage.
 
-SDL2 (via ctypes, Wayland backend)
-  → Renders keyboard UI on DSI-1 bottom screen
-  → Window title contains "[Bottom]" → ROCKNIX sway rule routes to DSI-1
-  → Periodically re-asserts `swaymsg output DSI-1 power on` (counters ES power-off)
-```
+1. **Window title must contain `[Bottom]`** — ROCKNIX's Sway config has a built-in rule that routes windows with `[Bottom]` in the title to DSI-1.
 
-## Module Structure
+2. **DSI-1 must be periodically reasserted** — EmulationStation has a rule that powers off DSI-1 on focus. Counter with `swaymsg 'output DSI-1 power on'` every 1.5 seconds.
 
-```
-rgds-keyboard/
-├── CLAUDE.md              ← You are here
-├── README.md              ← User-facing docs
-├── LICENSE                ← MIT
-├── install.sh             ← One-command device installer
-├── rgds-keyboard.sh       ← CLI launcher (start/stop/restart)
-├── Keyboard.sh            ← EmulationStation Ports toggle entry
-├── rgds_keyboard.py       ← Main entry point (imports and runs)
-└── rgds_kb/               ← Package: all keyboard logic
-    ├── __init__.py
-    ├── constants.py       ← Magic numbers, keycodes, colors, accent presets, bevel sizes
-    ├── font.py            ← 5×7 bitmap font (uppercase + lowercase + symbols + icons)
-    ├── sdl.py             ← SDL2 ctypes wrapper class
-    ├── uinput_device.py   ← Virtual keyboard (uinput EV_KEY emitter)
-    ├── touch_input.py     ← Touchscreen reader (evdev multitouch)
-    ├── joypad.py          ← R3 button monitor thread
-    ├── layouts.py         ← Layout definitions (main/shift/symbols/nav/options)
-    ├── renderer.py        ← Pixel-art key drawing with bevels, accent colors, options UI
-    ├── settings.py        ← Persistent settings: accent color, brightness control
-    └── engine.py          ← Main loop: state machine, options handling, key repeat
-```
+3. **Rendering must stay on main thread** — SDL2 rendering from background threads causes silent failures on this platform.
 
-## Key Design Decisions
+4. **Never use SDL2 hide/show for toggling** — Hiding/showing the SDL2 window causes it to leave Sway's window tree and lose DSI-1 assignment. Use render-black instead.
 
-1. **Zero external dependencies.** ROCKNIX ships a minimal Python with no pip.
-   Everything uses ctypes (SDL2, uinput) and stdlib only.
+5. **uinput abs arrays are 64 entries × 4 bytes** — Not 256. The struct layout is: name[80] + id(8+4 bytes) + absmax[64×4] + absmin[64×4] + absfuzz[64×4] + absflat[64×4].
 
-2. **SDL2 via ctypes, not pygame.** Pygame isn't available. We load `libSDL2-2.0.so.0`
-   directly and call C functions through ctypes wrappers.
+6. **Touchscreen grab must be cleaned up on crash** — Use `atexit` handler to release EVIOCGRAB on all grabbed file descriptors.
 
-3. **Raw evdev for touch.** We read `/dev/input/event2` directly with `os.read()`
-   and parse `input_event` structs. No python-evdev package.
+7. **Ports shortcuts go in `/storage/roms/ports/`** — NOT `/storage/.config/modules/`. The latter gets wiped by ROCKNIX's `001-sync-modules` autostart script on every boot.
 
-4. **Touch grab/ungrab.** When keyboard is visible, we `EVIOCGRAB` the touch device
-   so touches don't leak to other apps. Released when hidden.
+8. **Brightness control must use swaymsg** — `/sys/class/backlight/*` targets the top screen. Use `swaymsg 'output DSI-1 brightness <float>'` for the bottom screen.
 
-5. **Window title routing.** ROCKNIX's sway config routes windows with `[Bottom]`
-   in the title to DSI-1. Our window title is `"RGDS Keyboard [Bottom]"`.
+## Event Loop
 
-6. **Periodic re-assertion.** EmulationStation turns off DSI-1 when launching apps.
-   We call `swaymsg output DSI-1 power on` every 1.5s and re-fullscreen.
+The main loop uses `selectors.DefaultSelector` (epoll on Linux) to multiplex:
+- Touch fd (bottom touchscreen evdev)
+- Joypad fd (R3 button on gamepad)
+- Signal pipe fd (for SIGUSR1/2/SIGRTMIN wakeup)
 
-7. **Bitmap font.** 5×7 pixel glyphs stored as 7 bytes each (5-bit rows).
-   Rendered by plotting filled rectangles at a configurable scale.
+Timeouts:
+- **Hidden**: blocks until joypad/signal event (with 1.5s timeout for DSI-1 reassertion)
+- **Visible, idle**: 33ms timeout (30fps cap)
+- **Visible, key held**: 16ms timeout (60fps for smooth repeat)
 
-## Layout System
+## Signal Protocol (wvkbd-compatible)
 
-Five layers: `main`, `shift`, `symbols`, `nav`, `options`.
+- `SIGUSR1` → hide keyboard
+- `SIGUSR2` → show keyboard
+- `SIGRTMIN` → toggle keyboard
+- `SIGTERM` / `SIGINT` → clean shutdown
 
-Numbers are always the top row (y=0, h=48) on main/shift/symbols.
-Main displays lowercase letters (a, b, c), shift displays uppercase (A, B, C).
+## Device Auto-Detection
 
-Each layout is a dict with `name` and `rows`. Each row has:
-- `y`: vertical pixel offset
-- `h`: row height in pixels
-- `keys`: list of key dicts
+Parses `/proc/bus/input/devices` to find devices by capability bits:
+- **Touchscreen**: EV_ABS + ABS_MT_POSITION_X capability
+- **Joypad**: EV_KEY + BTN_THUMBR capability
+- **Haptic**: EV_FF capability or `/sys/class/leds/vibrator/brightness`
 
-Each key dict:
-- `l`: label/ID (unique within layout, used for press tracking)
-- `d`: display string (what's drawn on the key)
-- `c`: Linux keycode (e.g. `KEY_A = 30`) or `None` for action-only keys
-- `s`: bool — whether Shift modifier is held when emitting this key
-- `w`: float — relative width weight (keys are proportionally sized)
-- `a`: (optional) action string: `'shift'`, `'unshift'`, `'symbols'`, `'main'`, `'nav'`, `'options'`, `'accent_N'`, `'bright_up'`, `'bright_down'`
-- `accent_idx`: (optional, options only) int index into ACCENT_PRESETS
+Dual touchscreens (RG DS) are differentiated by event number (bottom = higher index).
 
-Layout switching: pressing a key with `a='shift'` switches to the `shift` layout, etc.
-Shift auto-returns: after typing one uppercase letter, reverts to `main`.
-Options entry: gear button (`a='options'`) on utility row. Back buttons return to `main`.
+Config allows override: set `touch_device` / `joypad_device` in config.json.
 
-## Pixel-Art Rendering
+## Rendering Pipeline
 
-Keys are drawn with chunky 3px bevels and 2px corner notches:
-- Light color on top + left edges (raised highlight)
-- Dark color on bottom + right edges (shadow)
-- Corner notches cut diagonally for pixel-rounded look
-- Pressed state: bevel inverts (sunken) + text shifts down-right 1px
-- Shift-active key: filled with current accent color
-- Letter keys get an extra 1px inner shadow line at bottom for depth
+1. All keys rendered to an `SDL_Texture` with `SDL_TEXTUREACCESS_TARGET`
+2. Dirty tracking: each key's visual state (pressed + shift_active) is cached
+3. On change: only dirty keys are re-rendered to the texture
+4. Full texture blitted to screen via single `SDL_RenderCopy`
+5. Layer changes trigger full redraw
 
-## Accent Color System
+## Themes
 
-8 color presets in `ACCENT_PRESETS` (constants.py): Ruby, Ocean, Mint, Solar, Violet, Lime, Coral, Ice.
-Each preset has `color` (face) and `hl` (highlight/bevel-light).
-The active accent colors: shift-active key fill, pressed key glow, brightness bar fill.
-Saved to `/storage/.rgds_keyboard_settings` via settings.py.
+8 palettes defined in `config.py` with semantic colour roles:
+`bg`, `key`, `key_hi`, `key_press`, `key_sp`, `key_act`, `text`, `text_sp`, `text_num`, `accent`, `border`, `divider`
 
-## Brightness Control
+Default: Tokyo Night. All meet WCAG 2.1 AA contrast requirements.
 
-Reads/writes `/sys/class/backlight/*/brightness` via settings.py.
-Options menu shows a visual progress bar and +/- buttons (step size = 15).
+## Hardware
 
-## Settings Persistence
-
-File: `/storage/.rgds_keyboard_settings` (simple key=value format).
-Currently stores: `accent_index=N` (0-7).
-Loaded on startup, saved on accent color change.
-
-## Key Repeat
-
-Keys in `REPEATABLE` set (`bksp`, `space`, `up`, `down`, `left`, `right`, `del`, etc.)
-support held-key repeat: after `REPEAT_DELAY` (0.4s), emits at `REPEAT_RATE` (0.05s).
-
-## State Machine
-
-```
-vis=False  → R3 press → vis=True  (grab touch, draw keyboard)
-vis=True   → R3 press → vis=False (ungrab touch, blank screen, reset to main layer)
-
-layer ∈ {main, shift, symbols, nav}
-shift_sticky (ss): True when shift was activated, cleared on layer change
-shift_active (sa): visual indicator for shift highlight
-```
-
-## Common Modification Patterns
-
-### Adding a new key to an existing layout
-1. In `layouts.py`, find the target layout and row
-2. Add a key dict: `{'l':'unique_id', 'd':'DISPLAY', 'c':KEY_CODE, 's':False, 'w':1.0}`
-3. Adjust `w` weights of neighboring keys if needed to fit
-
-### Adding a new layout layer
-1. In `layouts.py`, add a new layout dict following the existing pattern
-2. Add action keys in other layouts with `'a':'your_layer_name'` to switch to it
-3. No engine changes needed — the engine switches layers by action string
-
-### Changing colors
-Edit `constants.py` — all color tuples are `(R, G, B, A)` with descriptive names.
-Pixel-art bevel colors: `COLOR_BEVEL_LIGHT`, `COLOR_BEVEL_DARK`.
-Pressed state colors: `COLOR_PRESS_FACE`, `COLOR_PRESS_LIGHT`, `COLOR_PRESS_DARK`.
-Bevel thickness: `BEVEL` (default 3). Corner notch: `NOTCH` (default 2).
-
-### Adding a new accent color preset
-Add a dict to `ACCENT_PRESETS` in `constants.py`:
-`{'name': 'NAME', 'color': (R,G,B,255), 'hl': (R,G,B,255)}`
-Then add a matching swatch key in `layouts.py` `_build_options()`.
-
-### Changing brightness step size
-Edit `BRIGHTNESS_STEP` in `constants.py` (default 15, range 0–255).
-
-### Adding a new font glyph
-Add the character to the `FONT` dict in `font.py`. Each glyph is 7 ints,
-each int is a 5-bit row (bit 4 = leftmost pixel, bit 0 = rightmost).
-
-## Testing
-
-No automated tests (runs on bare-metal embedded device). To verify:
-1. `scp` files to device
-2. `python3 /storage/rgds_keyboard.py`
-3. Press R3 → keyboard should appear on bottom screen
-4. Tap keys → check input arrives in focused app (e.g. `foot` terminal)
-5. Check `/tmp/rgds_keyboard.log` for errors
-
-## Deployment
-
-```bash
-# From host machine:
-scp -r rgds_kb/ rgds_keyboard.py root@<DEVICE_IP>:/storage/
-ssh root@<DEVICE_IP> "python3 /storage/rgds_keyboard.py"
-
-# Or use the installer:
-scp -r . root@<DEVICE_IP>:/tmp/rgds-keyboard
-ssh root@<DEVICE_IP> "bash /tmp/rgds-keyboard/install.sh"
-```
-
-## Known Limitations
-
-- Event device paths are hardcoded (`/dev/input/event2`, `event6`)
-- No auto-detection of touch/joypad devices
-- Font is bitmap only (no TTF/FreeType)
-- No word prediction or swipe typing
-- Single language (English QWERTY)
-- No haptic feedback
-- No theming system (colors are constants)
+- **Device**: Anbernic RG DS (RK3568, Mali G52-2EE, dual 640×480 IPS, Goodix touch)
+- **OS**: ROCKNIX nightly (March 2026+), Sway compositor
+- **Touch**: Two Goodix capacitive touchscreens (event1=top, event2=bottom typically)
+- **Joypad**: retrogame device (event6 typically, R3 = BTN_THUMBR code 318)
+- **Stack**: Python 3, SDL2 via ctypes, uinput — zero external dependencies
